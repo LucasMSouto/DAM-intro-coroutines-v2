@@ -72,6 +72,7 @@ class ContributorsUI : JFrame("GitHub Contributors"), Contributors {
         }
         // Initialize actions
         init()
+        observeLoadingStatus()
     }
 
     override fun getSelectedVariant(): Variant = variant.getItemAt(variant.selectedIndex)
@@ -109,7 +110,7 @@ class ContributorsUI : JFrame("GitHub Contributors"), Contributors {
                     Contributors.LoadingStatus.COMPLETED -> "completed in ${status.elapsedTime}"
                     Contributors.LoadingStatus.IN_PROGRESS -> "in progress ${status.elapsedTime}"
                     Contributors.LoadingStatus.CANCELED -> "canceled"
-                    Contributors.LoadingStatus.INIT -> "init"
+                    Contributors.LoadingStatus.INIT -> "initialized"
                 }
 
                 // Update the UI components
