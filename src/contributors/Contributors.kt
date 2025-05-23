@@ -3,6 +3,7 @@ package contributors
 import contributors.Contributors.LoadingStatus.*
 import contributors.Variant.*
 import kotlinx.coroutines.*
+import okhttp3.Dispatcher
 import tasks.*
 import java.awt.event.ActionListener
 import javax.swing.SwingUtilities
@@ -79,9 +80,13 @@ interface Contributors: CoroutineScope {
                 }.setUpCancellation()
             }
             CONCURRENT -> { // Performing requests concurrently
-                launch {
+//                launch {
+//                launch(Dispatchers.Main) { // Runs the coroutine only on the main thread
+                launch(Dispatchers.Default) { // Runs the coroutine on a background thread
                     val users = loadContributorsConcurrent(service, req)
-                    updateResults(users, startTime)
+                    withContext(Dispatchers.Main) {
+                        updateResults(users, startTime)
+                    }
                 }.setUpCancellation()
             }
             NOT_CANCELLABLE -> { // Performing requests in a non-cancellable way
