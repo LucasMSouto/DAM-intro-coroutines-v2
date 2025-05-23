@@ -3,7 +3,8 @@ package contributors
 import contributors.Contributors.LoadingStatus.*
 import contributors.Variant.*
 import kotlinx.coroutines.*
-import okhttp3.Dispatcher
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.StateFlow
 import tasks.*
 import java.awt.event.ActionListener
 import javax.swing.SwingUtilities
@@ -21,7 +22,7 @@ enum class Variant {
     CHANNELS          // Request7Channels
 }
 
-interface Contributors: CoroutineScope {
+interface Contributors : CoroutineScope {
 
     val job: Job
 
@@ -59,6 +60,7 @@ interface Contributors: CoroutineScope {
                 val users = loadContributorsBlocking(service, req)
                 updateResults(users, startTime)
             }
+
             BACKGROUND -> { // Blocking a background thread
                 loadContributorsBackground(service, req) { users ->
                     SwingUtilities.invokeLater {
@@ -66,6 +68,7 @@ interface Contributors: CoroutineScope {
                     }
                 }
             }
+
             CALLBACKS -> { // Using callbacks
                 loadContributorsCallbacks(service, req) { users ->
                     SwingUtilities.invokeLater {
@@ -73,14 +76,15 @@ interface Contributors: CoroutineScope {
                     }
                 }
             }
+
             SUSPEND -> { // Using coroutines
                 launch {
                     val users = loadContributorsSuspend(service, req)
                     updateResults(users, startTime)
                 }.setUpCancellation()
             }
+
             CONCURRENT -> { // Performing requests concurrently
-//                launch {
 //                launch(Dispatchers.Main) { // Runs the coroutine only on the main thread
                 launch(Dispatchers.Default) { // Runs the coroutine on a background thread
                     val users = loadContributorsConcurrent(service, req)
@@ -89,12 +93,14 @@ interface Contributors: CoroutineScope {
                     }
                 }.setUpCancellation()
             }
+
             NOT_CANCELLABLE -> { // Performing requests in a non-cancellable way
                 launch {
                     val users = loadContributorsNotCancellable(service, req)
                     updateResults(users, startTime)
                 }.setUpCancellation()
             }
+
             PROGRESS -> { // Showing progress
                 launch(Dispatchers.Default) {
                     loadContributorsProgress(service, req) { users, completed ->
@@ -104,9 +110,29 @@ interface Contributors: CoroutineScope {
                     }
                 }.setUpCancellation()
             }
+
             CHANNELS -> {  // Performing requests concurrently and showing progress
+//                launch(Dispatchers.Default) {
+//                    loadContributorsChannels(service, req) { users, completed ->
+//                        withContext(Dispatchers.Main) {
+//                            updateResults(users, startTime, completed)
+//                        }
+//                    }
+//                }.setUpCancellation()
+
                 launch(Dispatchers.Default) {
-                    loadContributorsChannels(service, req) { users, completed ->
+                    val progressChannel = Channel<Pair<List<User>, Boolean>>() // Optional buffer size
+
+                    // Producer coroutine
+                    launch(Dispatchers.Default) {
+                        loadContributorsChannels(service, req) { users, completed ->
+                            progressChannel.send(users to completed)
+                        }
+                        progressChannel.close()
+                    }
+
+                    // Consumer loop
+                    for ((users, completed) in progressChannel) {
                         withContext(Dispatchers.Main) {
                             updateResults(users, startTime, completed)
                         }
@@ -116,13 +142,29 @@ interface Contributors: CoroutineScope {
         }
     }
 
-    private enum class LoadingStatus { COMPLETED, CANCELED, IN_PROGRESS }
+    enum class LoadingStatus { INIT, COMPLETED, CANCELED, IN_PROGRESS }
+
+    data class LoadingStateData(
+        val status: LoadingStatus = INIT,
+        val startTime: Long? = null,
+        val elapsedTime: String = "",
+    )
+
+    val loadingState: StateFlow<LoadingStateData>
 
     private fun clearResults() {
         updateContributors(listOf())
-        updateLoadingStatus(IN_PROGRESS)
+//        updateLoadingStatus(IN_PROGRESS)
+        updateLoadingStatus(LoadingStateData(IN_PROGRESS))
         setActionsStatus(newLoadingEnabled = false)
     }
+
+    private fun calculateElapsedTime(startTime: Long): String {
+        val time = System.currentTimeMillis() - startTime
+        return "${(time / 1000)}.${time % 1000 / 100} sec"
+    }
+
+    fun updateLoadingStatus(newStatus: LoadingStateData)
 
     private fun updateResults(
         users: List<User>,
@@ -130,28 +172,12 @@ interface Contributors: CoroutineScope {
         completed: Boolean = true
     ) {
         updateContributors(users)
-        updateLoadingStatus(if (completed) COMPLETED else IN_PROGRESS, startTime)
+        val status = if (completed) COMPLETED else IN_PROGRESS
+        val elapsedTime = calculateElapsedTime(startTime)
+        updateLoadingStatus(LoadingStateData(status, startTime, elapsedTime))
         if (completed) {
             setActionsStatus(newLoadingEnabled = true)
         }
-    }
-
-    private fun updateLoadingStatus(
-        status: LoadingStatus,
-        startTime: Long? = null
-    ) {
-        val time = if (startTime != null) {
-            val time = System.currentTimeMillis() - startTime
-            "${(time / 1000)}.${time % 1000 / 100} sec"
-        } else ""
-
-        val text = "Loading status: " +
-                when (status) {
-                    COMPLETED -> "completed in $time"
-                    IN_PROGRESS -> "in progress $time"
-                    CANCELED -> "canceled"
-                }
-        setLoadingStatus(text, status == IN_PROGRESS)
     }
 
     private fun Job.setUpCancellation() {
@@ -163,7 +189,8 @@ interface Contributors: CoroutineScope {
         // cancel the loading job if the 'cancel' button was clicked
         val listener = ActionListener {
             loadingJob.cancel()
-            updateLoadingStatus(CANCELED)
+//            updateLoadingStatus(CANCELED)
+            updateLoadingStatus(LoadingStateData(CANCELED))
         }
         addCancelListener(listener)
 
@@ -183,8 +210,7 @@ interface Contributors: CoroutineScope {
         val params = getParams()
         if (params.username.isEmpty() && params.password.isEmpty()) {
             removeStoredParams()
-        }
-        else {
+        } else {
             saveParams(params)
         }
     }

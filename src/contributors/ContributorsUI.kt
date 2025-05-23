@@ -1,6 +1,10 @@
 package contributors
 
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 import java.awt.Dimension
 import java.awt.GridBagConstraints
 import java.awt.GridBagLayout
@@ -31,6 +35,18 @@ class ContributorsUI : JFrame("GitHub Contributors"), Contributors {
 
     private val loadingIcon = ImageIcon(javaClass.classLoader.getResource("ajax-loader.gif"))
     private val loadingStatus = JLabel("Start new loading", loadingIcon, SwingConstants.CENTER)
+
+    /**
+     * Private mutable state flow that contains the current loading state data.
+     * This is the backing field for the public immutable state flow.
+     */
+    private val _loadingState = MutableStateFlow(Contributors.LoadingStateData())
+
+    /**
+     * Public immutable state flow that exposes the current loading state.
+     * Other components can safely observe this without modifying the state.
+     */
+    override val loadingState: StateFlow<Contributors.LoadingStateData> = _loadingState.asStateFlow()
 
     override val job = Job()
 
@@ -63,13 +79,46 @@ class ContributorsUI : JFrame("GitHub Contributors"), Contributors {
     override fun updateContributors(users: List<User>) {
         if (users.isNotEmpty()) {
             log.info("Updating result with ${users.size} rows")
-        }
-        else {
+        } else {
             log.info("Clearing result")
         }
         resultsModel.setDataVector(users.map {
             arrayOf(it.login, it.contributions)
         }.toTypedArray(), COLUMNS)
+    }
+
+    /**
+     * Updates the loading state by emitting a new value to the StateFlow.
+     * This triggers the UI update through the flow collector.
+     *
+     * @param newStatus New LoadingStateData to emit
+     */
+    override fun updateLoadingStatus(newStatus: Contributors.LoadingStateData) {
+        _loadingState.value = newStatus
+    }
+
+    /**
+     * Sets up a coroutine to observe the loading state flow and update the UI accordingly.
+     * This method creates a reactive connection between state changes and UI updates.
+     */
+    fun observeLoadingStatus() {
+        launch {
+            loadingState.collect { status ->
+                // Format the status text based on the current state
+                val text = "Loading status: " + when (status.status) {
+                    Contributors.LoadingStatus.COMPLETED -> "completed in ${status.elapsedTime}"
+                    Contributors.LoadingStatus.IN_PROGRESS -> "in progress ${status.elapsedTime}"
+                    Contributors.LoadingStatus.CANCELED -> "canceled"
+                    Contributors.LoadingStatus.INIT -> "init"
+                }
+
+                // Update the UI components
+                loadingStatus.text = text
+                loadingStatus.icon =
+                    if (status.status == Contributors.LoadingStatus.IN_PROGRESS) loadingIcon
+                    else null
+            }
+        }
     }
 
     override fun setLoadingStatus(text: String, iconRunning: Boolean) {
